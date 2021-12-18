@@ -88,7 +88,7 @@ class Environment:
         delay *= MILLISECONDS_IN_SECOND
         delay += LINK_RTT
 
-	    # add a multiplicative noise to the delay
+        # add a multiplicative noise to the delay
         delay *= np.random.uniform(NOISE_LOW, NOISE_HIGH)
 
         # rebuffer time

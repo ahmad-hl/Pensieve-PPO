@@ -57,10 +57,8 @@ class Environment:
         video_chunk_counter_sent = 0  # in bytes
 
         while True:  # download video chunk over mahimahi
-            throughput = self.cooked_bw[self.mahimahi_ptr] \
-                         * B_IN_MB / BITS_IN_BYTE
-            duration = self.cooked_time[self.mahimahi_ptr] \
-                       - self.last_mahimahi_time
+            throughput = self.cooked_bw[self.mahimahi_ptr] * B_IN_MB / BITS_IN_BYTE
+            duration = self.cooked_time[self.mahimahi_ptr] - self.last_mahimahi_time
 
             packet_payload = throughput * duration * PACKET_PAYLOAD_PORTION
 

@@ -1,27 +1,23 @@
 import multiprocessing as mp
-from os import name
 import numpy as np
 import logging
 import os
 import sys
 from abr import ABREnv
-# import ppo2 as network
+import sac as network
 import tensorflow as tf
-from sac import Network
-import ReplayBuffer
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-POLYAK = 0.995
 S_DIM = [6, 8]
 A_DIM = 6
-ACTOR_LR_RATE =1e-4
+ACTOR_LR_RATE =1e-3
 CRITIC_LR_RATE = 1e-3
-NUM_AGENTS = 6
-TRAIN_SEQ_LEN = 300  # take as a train batch
+NUM_AGENTS = 12
+TRAIN_SEQ_LEN = 1000  # take as a train batch
 TRAIN_EPOCH = 1000000
-MODEL_SAVE_INTERVAL = 100
+MODEL_SAVE_INTERVAL = 300
 RANDOM_SEED = 42
 RAND_RANGE = 10000
 SUMMARY_DIR = './results'
@@ -29,23 +25,16 @@ MODEL_DIR = './models'
 TRAIN_TRACES = './cooked_traces/'
 TEST_LOG_FOLDER = './test_results/'
 LOG_FILE = './results/log'
-PPO_TRAINING_EPO = 5
-SAMPLE_SZIE = 1024
+
 # create result directory
 if not os.path.exists(SUMMARY_DIR):
     os.makedirs(SUMMARY_DIR)
 
 NN_MODEL = None    
 
-def get_vars(scope):
-    return [x for x in tf.global_variables() if scope in x.name]
-
-
 def testing(epoch, nn_model, log_file):
     # clean up the test results folder
     os.system('rm -r ' + TEST_LOG_FOLDER)
-    #os.system('mkdir ' + TEST_LOG_FOLDER)
-
     if not os.path.exists(TEST_LOG_FOLDER):
         os.makedirs(TEST_LOG_FOLDER)
     # run test script
@@ -86,148 +75,137 @@ def testing(epoch, nn_model, log_file):
     log_file.flush()
 
     return rewards_mean, np.mean(entropies)
-
+        
 def central_agent(net_params_queues, exp_queues):
-    replay_buffer = ReplayBuffer.ReplayBuffer(obs_dim=S_DIM, act_dim=A_DIM, size=100000)
+
     assert len(net_params_queues) == NUM_AGENTS
     assert len(exp_queues) == NUM_AGENTS
-    tf_config=tf.ConfigProto(intra_op_parallelism_threads=5,
+    tf_config=tf.compat.v1.ConfigProto(intra_op_parallelism_threads=5,
                             inter_op_parallelism_threads=5)
-    with tf.Session(config = tf_config) as sess, open(LOG_FILE + '_test.txt', 'w') as test_log_file:
+    with tf.compat.v1.Session(config = tf_config) as sess, open(LOG_FILE + '_test.txt', 'w') as test_log_file:
         summary_ops, summary_vars = build_summaries()
 
-        # actor = network.Network(sess,
-        #         state_dim=S_DIM, action_dim=A_DIM,
-        #         learning_rate=ACTOR_LR_RATE)
+        actor = network.Network(sess,
+                state_dim=S_DIM, action_dim=A_DIM,
+                learning_rate=ACTOR_LR_RATE)
 
-        target_net = Network(sess, state_dim=S_DIM, action_dim=A_DIM, learning_rate=ACTOR_LR_RATE, name='target')
-        eval_net = Network(sess, state_dim=S_DIM, action_dim=A_DIM, learning_rate=ACTOR_LR_RATE, name='eval')
-
-        sess.run(tf.global_variables_initializer())
-        writer = tf.summary.FileWriter(SUMMARY_DIR, sess.graph)  # training monitor
-        saver = tf.train.Saver(max_to_keep=10)  # save neural net parameters
+        sess.run(tf.compat.v1.global_variables_initializer())
+        writer = tf.compat.v1.summary.FileWriter(SUMMARY_DIR, sess.graph)  # training monitor
+        saver = tf.compat.v1.train.Saver(max_to_keep=1000)  # save neural net parameters
 
         # restore neural net parameters
-        # nn_model = NN_MODEL
-        # if nn_model is not None:  # nn_model is the path to file
-        #     saver.restore(sess, nn_model)
-        #     print("Model restored.")
+        nn_model = NN_MODEL
+        if nn_model is not None:  # nn_model is the path to file
+            saver.restore(sess, nn_model)
+            print("Model restored.")
 
+        max_reward, max_epoch = -10000., 0
+        tick_gap = 0
         # while True:  # assemble experiences from agents, compute the gradients
-        for epoch in range(1, TRAIN_EPOCH):
-            if epoch % 10 == 0:
-                print(epoch, replay_buffer.size)
+        for epoch in range(TRAIN_EPOCH):
             # synchronize the network parameters of work agent
-            network_params = eval_net.get_network_params()
-            # print(network_params[0].keys())
+            actor_net_params = actor.get_network_params()
             for i in range(NUM_AGENTS):
-                net_params_queues[i].put(network_params)
+                net_params_queues[i].put(actor_net_params)
 
-            
+            s, a, ns, r, d = [], [], [], [], []
             for i in range(NUM_AGENTS):
-                s_batch, a_batch, r_batch, done_batch, entropy_batch = exp_queues[i].get()
-                for s, a, r, s_, done in zip(s_batch[:-1], a_batch, r_batch, s_batch[1:], done_batch):
-                    replay_buffer.store(s, a, r, s_, done)
-            
-            sample_data = replay_buffer.sample_batch(SAMPLE_SZIE)
-            
-            '''Training logic'''
+                s_, a_, ns_, r_, d_ = exp_queues[i].get()
+                s += s_
+                a += a_
+                ns += ns_
+                r += r_
+                d += d_
 
-            obs, a, r, obs2, done = sample_data['obs1'], sample_data['acts'], sample_data['rews'], sample_data['obs2'], sample_data['done']
+            s_batch = np.stack(s, axis=0)
+            a_batch = np.vstack(a)
+            next_s_batch = np.stack(ns, axis=0)
+            r_batch = np.vstack(r)
+            d_batch = np.vstack(d)
 
-            eval_entropy = eval_net.get_entropy(obs2)
-
-            
-
-            target_q = target_net.compute_v(obs2, r, done, eval_entropy)
-            # print(target_q)
-            pi_loss = eval_net.train(obs, a, target_q, epoch)
-
-            # print(q_loss)
-            new_params = eval_net.get_network_params()
-            old_params = target_net.get_network_params()
-
-            target_params_updates = []
-            for new_param, old_param in zip(new_params[:-1], old_params[:-1]):
-                target_params_update = []
-                for new_p, old_p in zip(new_param, old_param):
-                    target_params_update.append(old_p * POLYAK + (1-POLYAK)*new_p)
-                target_params_updates.append(target_params_update)
-            target_params_updates.append(new_params[-1])
-
-            target_net.set_network_params(target_params_updates)
-            
-            # actor.train(s_batch, a_batch, v_batch, epoch)
+            actor.train(s_batch, a_batch, next_s_batch, r_batch, d_batch, epoch)
             
             if epoch % MODEL_SAVE_INTERVAL == 0:
                 # Save the neural net parameters to disk.
                 save_path = saver.save(sess, SUMMARY_DIR + "/nn_model_ep_" +
                                        str(epoch) + ".ckpt")
-                print('model saved in ' + save_path)
                 avg_reward, avg_entropy = testing(epoch,
                     SUMMARY_DIR + "/nn_model_ep_" + str(epoch) + ".ckpt", 
                     test_log_file)
 
+                if avg_reward > max_reward:
+                    max_reward = avg_reward
+                    max_epoch = epoch
+                    tick_gap = 0
+                else:
+                    tick_gap += 1
+
+                if tick_gap >= 2:
+                    actor.entropy_decay()
+                    tick_gap = 0
+
                 summary_str = sess.run(summary_ops, feed_dict={
-                    summary_vars[0]: pi_loss/SAMPLE_SZIE,
+                    summary_vars[0]: actor.get_entropy(epoch),
                     summary_vars[1]: avg_reward,
                     summary_vars[2]: avg_entropy
                 })
+
                 writer.add_summary(summary_str, epoch)
                 writer.flush()
 
 def agent(agent_id, net_params_queue, exp_queue):
     env = ABREnv(agent_id)
-    with tf.Session() as sess, open(SUMMARY_DIR + '/log_agent_' + str(agent_id), 'w') as log_file:
-        actor = Network(sess, state_dim=S_DIM, action_dim=A_DIM, learning_rate=ACTOR_LR_RATE, name='hehe')
+    with tf.compat.v1.Session() as sess, open(SUMMARY_DIR + '/log_agent_' + str(agent_id), 'w') as log_file:
+        actor = network.Network(sess,
+                                state_dim=S_DIM, action_dim=A_DIM,
+                                learning_rate=ACTOR_LR_RATE)
 
         # initial synchronization of the network parameters from the coordinator
-        net_params = net_params_queue.get()
-        actor.set_network_params(net_params)
-
+        actor_net_params = net_params_queue.get()
+        actor.set_network_params(actor_net_params)
 
         time_stamp = 0
 
         for epoch in range(TRAIN_EPOCH):
             obs = env.reset()
-            s_batch, a_batch, r_batch, done_batch, entropy_batch = [], [], [], [], []
-            for _ in range(TRAIN_SEQ_LEN):
+            s_batch, a_batch, next_s_batch, r_batch = [], [], [], []
+            done_batch = []
+
+            for step in range(TRAIN_SEQ_LEN):
                 s_batch.append(obs)
 
-                action_prob = actor.get_action_prob(
+                action_prob = actor.predict(
                     np.reshape(obs, (1, S_DIM[0], S_DIM[1])))
-                
-                action_cumsum = np.cumsum(action_prob)
-                bit_rate = (action_cumsum > np.random.randint(
-                    1, RAND_RANGE) / float(RAND_RANGE)).argmax()
-                
-                entropy = -np.dot(action_prob, np.log(action_prob))
+
+                # gumbel noise
+                noise = np.random.gumbel(size=len(action_prob))
+                bit_rate = np.argmax(np.log(action_prob) + noise)
+
                 obs, rew, done, info = env.step(bit_rate)
 
                 action_vec = np.zeros(A_DIM)
                 action_vec[bit_rate] = 1
                 a_batch.append(action_vec)
                 r_batch.append(rew)
-                done_batch.append(done)
-                entropy_batch.append(entropy)
+                next_s_batch.append(obs)
+                done_batch.append(float(done))
                 if done:
                     break
-            # v_batch, td_target = actor.compute_v(s_batch, a_batch, r_batch, done)
-            exp_queue.put([s_batch, a_batch, r_batch, done_batch, entropy_batch])
+            exp_queue.put([s_batch, a_batch, next_s_batch, r_batch, done_batch])
 
             actor_net_params = net_params_queue.get()
             actor.set_network_params(actor_net_params)
 
 def build_summaries():
-    td_loss = tf.Variable(0.)
-    tf.summary.scalar("Beta", td_loss)
-    eps_total_reward = tf.Variable(0.)
-    tf.summary.scalar("Reward", eps_total_reward)
-    entropy = tf.Variable(0.)
-    tf.summary.scalar("Entropy", entropy)
+    td_loss = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("Beta", td_loss)
+    eps_total_reward = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("Reward", eps_total_reward)
+    entropy = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("Entropy", entropy)
 
     summary_vars = [td_loss, eps_total_reward, entropy]
-    summary_ops = tf.summary.merge_all()
+    summary_ops = tf.compat.v1.summary.merge_all()
 
     return summary_ops, summary_vars
 

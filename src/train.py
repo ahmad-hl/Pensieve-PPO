@@ -1,14 +1,12 @@
 import multiprocessing as mp
 import numpy as np
-import logging
 import os
-import sys
 from abr import ABREnv
 import ppo2 as network
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["CUDA_DEVICE_ORDER"]=''
+os.environ["CUDA_VISIBLE_DEVICES"]=''
 
 S_DIM = [6, 8]
 A_DIM = 6
@@ -35,8 +33,6 @@ NN_MODEL = None
 def testing(epoch, nn_model, log_file):
     # clean up the test results folder
     os.system('rm -r ' + TEST_LOG_FOLDER)
-    #os.system('mkdir ' + TEST_LOG_FOLDER)
-
     if not os.path.exists(TEST_LOG_FOLDER):
         os.makedirs(TEST_LOG_FOLDER)
     # run test script
@@ -82,18 +78,18 @@ def central_agent(net_params_queues, exp_queues):
 
     assert len(net_params_queues) == NUM_AGENTS
     assert len(exp_queues) == NUM_AGENTS
-    tf_config=tf.ConfigProto(intra_op_parallelism_threads=5,
+    tf_config=tf.compat.v1.ConfigProto(intra_op_parallelism_threads=5,
                             inter_op_parallelism_threads=5)
-    with tf.Session(config = tf_config) as sess, open(LOG_FILE + '_test.txt', 'w') as test_log_file:
+    with tf.compat.v1.Session(config = tf_config) as sess, open(LOG_FILE + '_test.txt', 'w') as test_log_file:
         summary_ops, summary_vars = build_summaries()
 
         actor = network.Network(sess,
                 state_dim=S_DIM, action_dim=A_DIM,
                 learning_rate=ACTOR_LR_RATE)
 
-        sess.run(tf.global_variables_initializer())
-        writer = tf.summary.FileWriter(SUMMARY_DIR, sess.graph)  # training monitor
-        saver = tf.train.Saver(max_to_keep=1000)  # save neural net parameters
+        sess.run(tf.compat.v1.global_variables_initializer())
+        writer = tf.compat.v1.summary.FileWriter(SUMMARY_DIR, sess.graph)  # training monitor
+        saver = tf.compat.v1.train.Saver(max_to_keep=1000)  # save neural net parameters
 
         # restore neural net parameters
         nn_model = NN_MODEL
@@ -157,7 +153,7 @@ def central_agent(net_params_queues, exp_queues):
 
 def agent(agent_id, net_params_queue, exp_queue):
     env = ABREnv(agent_id)
-    with tf.Session() as sess, open(SUMMARY_DIR + '/log_agent_' + str(agent_id), 'w') as log_file:
+    with tf.compat.v1.Session() as sess, open(SUMMARY_DIR + '/log_agent_' + str(agent_id), 'w') as log_file:
         actor = network.Network(sess,
                                 state_dim=S_DIM, action_dim=A_DIM,
                                 learning_rate=ACTOR_LR_RATE)
@@ -165,8 +161,6 @@ def agent(agent_id, net_params_queue, exp_queue):
         # initial synchronization of the network parameters from the coordinator
         actor_net_params = net_params_queue.get()
         actor.set_network_params(actor_net_params)
-
-        time_stamp = 0
 
         for epoch in range(TRAIN_EPOCH):
             obs = env.reset()
@@ -200,15 +194,15 @@ def agent(agent_id, net_params_queue, exp_queue):
             actor.set_network_params(actor_net_params)
 
 def build_summaries():
-    td_loss = tf.Variable(0.)
-    tf.summary.scalar("Beta", td_loss)
-    eps_total_reward = tf.Variable(0.)
-    tf.summary.scalar("Reward", eps_total_reward)
-    entropy = tf.Variable(0.)
-    tf.summary.scalar("Entropy", entropy)
+    td_loss = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("TD-loss", td_loss)
+    eps_total_reward = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("Reward", eps_total_reward)
+    entropy = tf.compat.v1.Variable(0.)
+    tf.compat.v1.summary.scalar("TD-Entropy", entropy)
 
     summary_vars = [td_loss, eps_total_reward, entropy]
-    summary_ops = tf.summary.merge_all()
+    summary_ops = tf.compat.v1.summary.merge_all()
 
     return summary_ops, summary_vars
 

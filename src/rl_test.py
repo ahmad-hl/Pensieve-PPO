@@ -1,10 +1,9 @@
 import os
 import sys
-os.environ['CUDA_VISIBLE_DEVICES']='-1'
+# os.environ['CUDA_VISIBLE_DEVICES']=''
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import load_trace
-#import a2c as network
 import ppo2 as network
 import fixed_env as env
 
@@ -42,14 +41,14 @@ def main():
     log_path = LOG_FILE + '_' + all_file_names[net_env.trace_idx]
     log_file = open(log_path, 'w')
 
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
 
         actor = network.Network(sess,
                                  state_dim=[S_INFO, S_LEN], action_dim=A_DIM,
                                  learning_rate=ACTOR_LR_RATE)
 
-        sess.run(tf.global_variables_initializer())
-        saver = tf.train.Saver()  # save neural net parameters
+        sess.run(tf.compat.v1.global_variables_initializer())
+        saver = tf.compat.v1.train.Saver()  # save neural net parameters
 
         # restore neural net parameters
         if NN_MODEL is not None:  # NN_MODEL is the path to file

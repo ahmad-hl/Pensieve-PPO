@@ -1,5 +1,4 @@
 # add queuing delay into halo
-import os
 import numpy as np
 import abrenv
 import load_trace

@@ -1,6 +1,6 @@
 import math
 import numpy as np
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import os
 import time
 os.environ['CUDA_VISIBLE_DEVICES'] = '2'
@@ -14,7 +14,7 @@ EPS = 0.2
 
 class Network():
     def CreateNetwork(self, inputs):
-        with tf.variable_scope('actor'):
+        with tf.compat.v1.variable_scope('actor'):
             split_0 = tflearn.fully_connected(
                 inputs[:, 0:1, -1], FEATURE_NUM, activation='relu')
             split_1 = tflearn.fully_connected(
@@ -52,8 +52,8 @@ class Network():
         })
 
     def r(self, pi_new, pi_old, acts):
-        return tf.reduce_sum(tf.multiply(pi_new, acts), reduction_indices=1, keepdims=True) / \
-                tf.reduce_sum(tf.multiply(pi_old, acts), reduction_indices=1, keepdims=True)
+        return tf.compat.v1.reduce_sum(tf.compat.v1.multiply(pi_new, acts), axis=1, keepdims=True) / \
+                tf.compat.v1.reduce_sum(tf.compat.v1.multiply(pi_old, acts), axis=1, keepdims=True)
 
     def __init__(self, sess, state_dim, action_dim, learning_rate):
         self._entropy = 5.
@@ -62,45 +62,45 @@ class Network():
         self.a_dim = action_dim
         self.lr_rate = learning_rate
         self.sess = sess
-        self.R = tf.placeholder(tf.float32, [None, 1])
-        self.inputs = tf.placeholder(tf.float32, [None, self.s_dim[0], self.s_dim[1]])
-        self.old_pi = tf.placeholder(tf.float32, [None, self.a_dim])
-        self.acts = tf.placeholder(tf.float32, [None, self.a_dim])
-        self.entropy_weight = tf.placeholder(tf.float32)
+        self.R = tf.compat.v1.placeholder(tf.compat.v1.float32, [None, 1])
+        self.inputs = tf.compat.v1.placeholder(tf.compat.v1.float32, [None, self.s_dim[0], self.s_dim[1]])
+        self.old_pi = tf.compat.v1.placeholder(tf.compat.v1.float32, [None, self.a_dim])
+        self.acts = tf.compat.v1.placeholder(tf.compat.v1.float32, [None, self.a_dim])
+        self.entropy_weight = tf.compat.v1.placeholder(tf.compat.v1.float32)
         self.pi, self.val = self.CreateNetwork(inputs=self.inputs)
-        self.real_out = tf.clip_by_value(self.pi, ACTION_EPS, 1. - ACTION_EPS)
-        self.log_prob = tf.log(tf.reduce_sum(tf.multiply(self.real_out, self.acts), reduction_indices=1, keepdims=True))
-        self.entropy = tf.multiply(self.real_out, tf.log(self.real_out))
-        self.adv = tf.stop_gradient(self.R - self.val)
-        self.ppo2loss = tf.minimum(self.r(self.real_out, self.old_pi, self.acts) * self.adv, 
-                            tf.clip_by_value(self.r(self.real_out, self.old_pi, self.acts), 1 - EPS, 1 + EPS) * self.adv
+        self.real_out = tf.compat.v1.clip_by_value(self.pi, ACTION_EPS, 1. - ACTION_EPS)
+        self.log_prob = tf.compat.v1.log(tf.compat.v1.reduce_sum(tf.compat.v1.multiply(self.real_out, self.acts), axis=1, keepdims=True))
+        self.entropy = tf.compat.v1.multiply(self.real_out, tf.compat.v1.log(self.real_out))
+        self.adv = tf.compat.v1.stop_gradient(self.R - self.val)
+        self.ppo2loss = tf.compat.v1.minimum(self.r(self.real_out, self.old_pi, self.acts) * self.adv,
+                            tf.compat.v1.clip_by_value(self.r(self.real_out, self.old_pi, self.acts), 1 - EPS, 1 + EPS) * self.adv
                         )
-        self.dual_loss = tf.cast(tf.less(self.adv, 0.), dtype=tf.float32)  * \
-            tf.maximum(self.ppo2loss, 3. * self.adv) + \
-            tf.cast(tf.greater_equal(self.adv, 0.), dtype=tf.float32) * \
+        self.dual_loss = tf.compat.v1.cast(tf.compat.v1.less(self.adv, 0.), dtype=tf.compat.v1.float32)  * \
+            tf.compat.v1.maximum(self.ppo2loss, 3. * self.adv) + \
+            tf.compat.v1.cast(tf.compat.v1.greater_equal(self.adv, 0.), dtype=tf.compat.v1.float32) * \
             self.ppo2loss
         
         self.a2closs = self.log_prob * self.adv
         # Get all network parameters
         self.network_params = \
-            tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
+            tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.TRAINABLE_VARIABLES, scope='actor')
 
         # Set all network parameters
         self.input_network_params = []
         for param in self.network_params:
             self.input_network_params.append(
-                tf.placeholder(tf.float32, shape=param.get_shape()))
+                tf.compat.v1.placeholder(tf.compat.v1.float32, shape=param.get_shape()))
         self.set_network_params_op = []
         for idx, param in enumerate(self.input_network_params):
             self.set_network_params_op.append(
                 self.network_params[idx].assign(param))
         
-        self.loss = - tf.reduce_sum(self.dual_loss) \
-            + self.entropy_weight * tf.reduce_sum(self.entropy)
+        self.loss = - tf.compat.v1.reduce_sum(self.dual_loss) \
+            + self.entropy_weight * tf.compat.v1.reduce_sum(self.entropy)
         
-        self.optimize = tf.train.AdamOptimizer(self.lr_rate).minimize(self.loss)
+        self.optimize = tf.compat.v1.train.AdamOptimizer(self.lr_rate).minimize(self.loss)
         self.val_loss = tflearn.mean_square(self.val, self.R)
-        self.val_opt = tf.train.AdamOptimizer(self.lr_rate * 10.).minimize(self.val_loss)
+        self.val_opt = tf.compat.v1.train.AdamOptimizer(self.lr_rate * 10.).minimize(self.val_loss)
 
     def predict(self, input):
         action = self.sess.run(self.real_out, feed_dict={

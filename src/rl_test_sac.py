@@ -1,18 +1,16 @@
 import os
 import sys
-os.environ['CUDA_VISIBLE_DEVICES']='-1'
+# os.environ['CUDA_VISIBLE_DEVICES']=''
 import numpy as np
 import tensorflow as tf
 import load_trace
-#import a2c as network
-# import ppo2 as network
+import sac as network
 import fixed_env as env
-from sac import Network
+
 
 S_INFO = 6  # bit_rate, buffer_size, next_chunk_size, bandwidth_measurement(throughput and time), chunk_til_video_end
 S_LEN = 8  # take how many frames in the past
 A_DIM = 6
-S_DIM = [6, 8]
 ACTOR_LR_RATE = 0.0001
 CRITIC_LR_RATE = 0.001
 VIDEO_BIT_RATE = [300,750,1200,1850,2850,4300]  # Kbps
@@ -43,20 +41,19 @@ def main():
     log_path = LOG_FILE + '_' + all_file_names[net_env.trace_idx]
     log_file = open(log_path, 'w')
 
-    with tf.Session() as sess:
+    with tf.compat.v1.Session() as sess:
 
-        target_net = Network(sess, state_dim=S_DIM, action_dim=A_DIM, learning_rate=ACTOR_LR_RATE, name='target')
-        eval_net = Network(sess, state_dim=S_DIM, action_dim=A_DIM, learning_rate=ACTOR_LR_RATE, name='eval')
+        actor = network.Network(sess,
+                                 state_dim=[S_INFO, S_LEN], action_dim=A_DIM,
+                                 learning_rate=ACTOR_LR_RATE)
 
-        sess.run(tf.global_variables_initializer())
-        saver = tf.train.Saver()  # save neural net parameters
+        sess.run(tf.compat.v1.global_variables_initializer())
+        saver = tf.compat.v1.train.Saver()  # save neural net parameters
 
         # restore neural net parameters
-        print(NN_MODEL)
         if NN_MODEL is not None:  # NN_MODEL is the path to file
             saver.restore(sess, NN_MODEL)
             print("Testing model restored.")
-        
 
         time_stamp = 0
 
@@ -122,14 +119,14 @@ def main():
             state[4, :A_DIM] = np.array(next_video_chunk_sizes) / M_IN_K / M_IN_K  # mega byte
             state[5, -1] = np.minimum(video_chunk_remain, CHUNK_TIL_VIDEO_END_CAP) / float(CHUNK_TIL_VIDEO_END_CAP)
 
-            action_prob = target_net.get_action_prob(np.reshape(state, (1, S_INFO, S_LEN)))
-            # print(action_prob)
-            action_cumsum = np.cumsum(action_prob)
-            bit_rate = (action_cumsum > np.random.randint(
-                1, RAND_RANGE) / float(RAND_RANGE)).argmax()
+            action_prob = actor.predict(np.reshape(state, (1, S_INFO, S_LEN)))
+            # gumbel noise
+            noise = np.random.gumbel(size=len(action_prob))
+            bit_rate = np.argmax(np.log(action_prob) + noise)
+            # bit_rate = np.argmax(action_prob)
             
             s_batch.append(state)
-            entropy_ = -np.dot(action_prob, np.log(action_prob))
+            entropy_ = -1. * np.dot(action_prob, np.log(action_prob))
             entropy_record.append(entropy_)
 
             if end_of_video:
