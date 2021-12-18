@@ -19,7 +19,7 @@ We reported the training curve of entropy weight beta, reward, and entropy respe
 Tips: the orange curve: pensieve-ppo; the blue curve: pensieve-a2c
 
 <p align="center">
-    <img src="beta.png" width="30%"><img src="reward.png" width="30%"><img src="entropy.png" width="30%">
+    <img src="beta.png" width="30%"/><img src="reward.png" width="30%"/><img src="entropy.png" width="30%"/>
 </p>
 
 ## Pretrained Model
